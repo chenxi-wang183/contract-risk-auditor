@@ -1,7 +1,7 @@
 streamlit
 python-docx
+pdfplumber
 pypdf
 openai
-chromadb
+chromadb==0.4.24
 tiktoken
-pdfplumber
