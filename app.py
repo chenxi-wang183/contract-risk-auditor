@@ -5,7 +5,14 @@ import tempfile
 from datetime import datetime
 from docx import Document
 import pdfplumber
-from sop_analyzer import analyze_all   # ← 保留你的逻辑引擎
+from sop_analyzer import analyze_all  
+from openai import OpenAI
+from dotenv import load_dotenv
+import os
+
+# Load local .env if exists (safe for local, ignored online)
+load_dotenv()
+DEFAULT_API_KEY = os.getenv("OPENAI_API_KEY", "") # ← 保留你的逻辑引擎
 
 # -------------------- PAGE CONFIG --------------------
 st.set_page_config(
@@ -55,22 +62,44 @@ button[kind="secondary"]:hover {
 """, unsafe_allow_html=True)
 
 # -------------------- SIDEBAR --------------------
-with st.sidebar:
-    st.markdown("### Settings")
+# -------------------- SIDEBAR --------------------
+import os
 
-    api_key = st.text_input("Enter your OpenAI API Key", type="password")
+# -------------------- SIDEBAR --------------------
+# -------------------- SIDEBAR --------------------
+with st.sidebar:
+    st.markdown("### API Key Required")
+
+    # 用户输入自己的 API Key（必填）
+    user_api_key = st.text_input("Enter your OpenAI API Key", type="password")
+
+    # 优先使用用户输入，否则 fallback 到本地 .env
+    api_key = user_api_key if user_api_key else DEFAULT_API_KEY
+
     if not api_key:
-        st.warning("Please enter your API key to use the analyzer.")
-    else:
-        st.success("API key loaded.")
+        st.warning("⚠️ Please enter your API key to use the analyzer.")
+        st.stop()  # 没有 key → 直接停止，避免执行后续分析
+
+    # ✅ 验证 Key 是否有效
+    try:
+        client = OpenAI(api_key=api_key)
+        client.models.list()  # 访问一次模型列表验证 key 是否可用
+        st.success("✅ API Key validated.")
+    except Exception:
+        st.error("❌ Invalid API Key. Please check and try again.")
+        st.stop()
 
     st.markdown("---")
     st.markdown("#### Upload History")
+
+    # 初始化历史记录
     if "history" not in st.session_state:
         st.session_state["history"] = []
-    for file in st.session_state["history"]:
-        st.markdown(f"- {file}")
 
+    # 展示历史记录（倒序，最新在上）
+    for fname in reversed(st.session_state["history"][-6:]):  # 限制最多展示6条
+        st.markdown(f"- {fname}")
+        
 # -------------------- HEADER --------------------
 st.markdown("""
 <div style="text-align:center; margin-top:-10px;">
