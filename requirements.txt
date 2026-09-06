@@ -5,3 +5,5 @@ pypdf
 openai
 chromadb==0.4.24
 tiktoken
+llama-index-llms-openai-like
+llama-index-embeddings-openai-like
