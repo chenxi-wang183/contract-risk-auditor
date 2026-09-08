@@ -5,6 +5,12 @@ NDA 条款风险筛查工具:上传保密协议,逐条判定风险等级,输出�
 A clause-level risk screen for non-disclosure agreements. Upload an NDA, get every clause graded, and download a Word risk assessment report. The grading is done by a deterministic rule engine — the model only rewrites the wording.
 
 Show Image
+![alt text](image.png)
+![alt text](image-1.png)
+![alt text](image-2.png)
+![alt text](image-3.png)
+
+
 
 在线体验 / Live app: <(https://contract-risk-auditor-aflvtd2ynvndbdnzeq3aag.streamlit.app/)>
 
