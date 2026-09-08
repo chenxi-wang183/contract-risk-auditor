@@ -6,7 +6,7 @@ A clause-level risk screen for non-disclosure agreements. Upload an NDA, get eve
 
 Show Image
 
-在线体验 / Live app: <!-- 部署后把网址填在这里 / add the deployed URL here -->
+在线体验 / Live app: <(https://contract-risk-auditor-aflvtd2ynvndbdnzeq3aag.streamlit.app/)>
 
 不填 API Key 也可完整使用:条款分级、风险说明、修改建议与报告导出均不依赖模型。填入 Key 后,风险说明会被改写为律师备忘录口吻。支持智谱 GLM、Google Gemini 与 OpenAI。
 
