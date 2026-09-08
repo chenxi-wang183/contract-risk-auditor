@@ -1,3 +1,4 @@
+
 import os
 import re
 import tempfile
@@ -278,13 +279,17 @@ uploaded = st.file_uploader("Upload contract", type=["pdf", "docx", "txt"], labe
 if not uploaded:
     st.stop()
  
-if not api_key:
-    st.warning("Enter an API key in the sidebar to run the review.")
-    st.stop()
+polish_enabled = bool(api_key)
+if not polish_enabled:
+    st.info(
+        "Running without an API key. Clause screening, risk grading and the downloadable "
+        "report all work — findings are shown in the rule engine's own wording, without the "
+        "drafted memo tone. Add a key in the sidebar to enable that."
+    )
  
  
 # -------------------- ANALYSIS (cached) --------------------
-cache_key = f"{uploaded.name}::{provider_name}"
+cache_key = f"{uploaded.name}::{provider_name}::{'polished' if polish_enabled else 'raw'}"
  
 if st.session_state.analysis_key != cache_key:
     text = extract_text(uploaded)
@@ -300,12 +305,14 @@ if st.session_state.analysis_key != cache_key:
  
     results, counters = analyze_all(clauses)
  
-    # Only flagged clauses are sent to the model. Rewriting the explanation for
-    # clauses that already passed adds cost and latency but no information.
+    # The rule engine has already decided the grade, the risk and the fix. The model
+    # only rewrites that wording, so it can be skipped entirely without changing any
+    # finding. Only flagged clauses are sent - rewriting clauses that passed adds cost
+    # and latency but no information.
     flagged = [r for r in results if r["level"] in ("RED", "YELLOW")]
     cfg = PROVIDERS[provider_name]
  
-    if flagged:
+    if flagged and polish_enabled:
         progress = st.progress(0.0, text=f"Reviewing {len(flagged)} flagged clauses...")
         for i, r in enumerate(flagged, start=1):
             r["risk"] = enhance_explanation(
