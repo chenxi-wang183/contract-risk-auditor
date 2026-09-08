@@ -1,7 +1,4 @@
 streamlit
-python-docx
-pdfplumber
-pypdf
 openai
-chromadb==0.4.24
-tiktoken
+pdfplumber
+python-docx
