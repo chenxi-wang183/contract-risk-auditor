@@ -1,146 +1,210 @@
-import streamlit as st
 import os
 import re
 import tempfile
 from datetime import datetime
-from docx import Document
+ 
+import streamlit as st
 import pdfplumber
-from sop_analyzer import analyze_all  
-from openai import OpenAI
-from dotenv import load_dotenv
-import os
-
-# Load local .env if exists (safe for local, ignored online)
-load_dotenv()
-DEFAULT_API_KEY = os.getenv("OPENAI_API_KEY", "") # ← 保留你的逻辑引擎
-
+from docx import Document
+ 
+from sop_analyzer import analyze_all
+from explain_llm import enhance_explanation
+ 
 # -------------------- PAGE CONFIG --------------------
 st.set_page_config(
-    page_title="Intelligent Contract Review",
+    page_title="Contract Risk Auditor",
     page_icon="⚖️",
     layout="wide",
 )
-
-# -------------------- CUSTOM CSS (Fonts + Layout) --------------------
+ 
+# -------------------- MODEL PROVIDERS --------------------
+# Every provider below speaks the OpenAI protocol, so only the endpoint and the
+# model name change. Keeping them in one dict makes swapping providers a config
+# change rather than a code change.
+PROVIDERS = {
+    "Zhipu GLM (free)": {
+        "api_base": "https://open.bigmodel.cn/api/paas/v4",
+        "model": "glm-4-flash",
+        "key_hint": "open.bigmodel.cn",
+    },
+    "Google Gemini": {
+        "api_base": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "model": "gemini-2.0-flash",
+        "key_hint": "aistudio.google.com",
+    },
+    "OpenAI": {
+        "api_base": "https://api.openai.com/v1",
+        "model": "gpt-4o-mini",
+        "key_hint": "platform.openai.com",
+    },
+}
+ 
+LEVEL_COLORS = {"RED": "#E5484D", "YELLOW": "#F5A524", "GREEN": "#30A46C"}
+LEVEL_LABELS = {"RED": "High risk", "YELLOW": "Review needed", "GREEN": "Acceptable"}
+ 
+# -------------------- STYLES --------------------
 st.markdown("""
 <style>
-body, input, textarea, button {
-    font-family: 'Times New Roman', serif !important;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
+ 
+.stApp { background-color: #F4F5F7; }
+html, body, [class*="css"], .stMarkdown, input, textarea, button, label {
+    font-family: 'Inter', -apple-system, sans-serif !important;
 }
-
-/* Heading Font */
-h1 {
-    font-family: 'Times New Roman', serif !important;
-}
-
-/* Upload Box */
-.upload-box {
-    border: 2px dashed #1A4AFF;
+ 
+/* Dark console header */
+.console-bar {
+    background: #14181F;
     border-radius: 10px;
-    padding: 28px;
-    background-color:#F9FAFF;
-    text-align:center;
-    font-weight:600;
-    color:#1A4AFF;
-    margin-bottom: 18px;
+    padding: 26px 32px;
+    margin-bottom: 22px;
+    display: flex;
+    align-items: center;
+    gap: 18px;
 }
-
-/* Centered Download Button (White/Black + Shadow) */
-button[kind="secondary"] {
-    border-radius: 8px !important;
-    border: 1.5px solid #111 !important;
-    background-color: #fff !important;
-    color:#111 !important;
-    padding: 11px 26px !important;
-    box-shadow: 0 3px 8px rgba(0,0,0,0.15) !important;
-    font-weight:600 !important;
+.console-bar h1 {
+    color: #FFFFFF;
+    font-size: 27px;
+    font-weight: 700;
+    letter-spacing: -0.4px;
+    margin: 0;
 }
-button[kind="secondary"]:hover {
-    background-color:#F4F4F4 !important;
+.console-bar p {
+    color: #8B93A1;
+    font-size: 13.5px;
+    margin: 4px 0 0 0;
+    letter-spacing: 0.2px;
 }
+.console-tag {
+    margin-left: auto;
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 11px;
+    color: #6E7787;
+    border: 1px solid #2A303B;
+    border-radius: 5px;
+    padding: 5px 11px;
+    white-space: nowrap;
+}
+ 
+/* Metric strip */
+.metric-row { display: flex; gap: 12px; margin-bottom: 22px; }
+.metric-box {
+    flex: 1;
+    background: #FFFFFF;
+    border: 1px solid #E3E6EA;
+    border-radius: 9px;
+    padding: 16px 18px;
+}
+.metric-box .label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.9px;
+    text-transform: uppercase;
+    color: #79808C;
+}
+.metric-box .value {
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1.25;
+    margin-top: 3px;
+}
+ 
+/* Clause cards */
+.clause-card {
+    background: #FFFFFF;
+    border: 1px solid #E3E6EA;
+    border-left-width: 4px;
+    border-radius: 8px;
+    padding: 17px 20px;
+    margin-bottom: 13px;
+}
+.clause-head {
+    display: flex;
+    align-items: baseline;
+    gap: 11px;
+    margin-bottom: 12px;
+}
+.clause-title {
+    font-family: 'JetBrains Mono', monospace !important;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: #14181F;
+}
+.clause-badge {
+    margin-left: auto;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.7px;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 4px;
+    color: #FFFFFF;
+    white-space: nowrap;
+}
+.field-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.9px;
+    text-transform: uppercase;
+    color: #79808C;
+    margin-top: 13px;
+    margin-bottom: 4px;
+}
+.field-body { font-size: 14.2px; line-height: 1.62; color: #2B313B; }
+.excerpt {
+    font-size: 13.2px;
+    line-height: 1.6;
+    color: #4A515C;
+    background: #F7F8FA;
+    border-radius: 5px;
+    padding: 10px 13px;
+}
+ 
+/* Drop zone */
+.drop-zone {
+    border: 1.5px dashed #C3C9D2;
+    border-radius: 9px;
+    padding: 30px;
+    background: #FFFFFF;
+    text-align: center;
+    color: #79808C;
+    font-size: 14px;
+    margin-bottom: 14px;
+}
+[data-testid="stSidebar"] { background: #FFFFFF; }
 </style>
 """, unsafe_allow_html=True)
-
-# -------------------- SIDEBAR --------------------
-# -------------------- SIDEBAR --------------------
-import os
-
-# -------------------- SIDEBAR --------------------
-# -------------------- SIDEBAR --------------------
-with st.sidebar:
-    st.markdown("### API Key Required")
-
-    # 用户输入自己的 API Key（必填）
-    user_api_key = st.text_input("Enter your OpenAI API Key", type="password")
-
-    # 优先使用用户输入，否则 fallback 到本地 .env
-    api_key = user_api_key if user_api_key else DEFAULT_API_KEY
-
-    if not api_key:
-        st.warning("⚠️ Please enter your API key to use the analyzer.")
-        st.stop()  # 没有 key → 直接停止，避免执行后续分析
-
-    # ✅ 验证 Key 是否有效
-    try:
-        client = OpenAI(api_key=api_key)
-        client.models.list()  # 访问一次模型列表验证 key 是否可用
-        st.success("✅ API Key validated.")
-    except Exception:
-        st.error("❌ Invalid API Key. Please check and try again.")
-        st.stop()
-
-    st.markdown("---")
-    st.markdown("#### Upload History")
-
-    # 初始化历史记录
-    if "history" not in st.session_state:
-        st.session_state["history"] = []
-
-    # 展示历史记录（倒序，最新在上）
-    for fname in reversed(st.session_state["history"][-6:]):  # 限制最多展示6条
-        st.markdown(f"- {fname}")
-        
-# -------------------- HEADER --------------------
-st.markdown("""
-<div style="text-align:center; margin-top:-10px;">
-    <svg width="62" height="62" viewBox="0 0 24 24" fill="none" stroke="#1A4AFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="12" y1="1" x2="12" y2="22"></line>
-        <path d="M5 6h14"></path>
-        <path d="M3 6l4 8 4-8"></path>
-        <path d="M13 6l4 8 4-8"></path>
-    </svg>
-    <h1 style="font-size:44px; font-weight:800; margin-top:6px;">
-        Intelligent Contract Review
-    </h1>
-    <p style="color:#444; font-size:17px;">
-        Contract Risk Identification & Clause-Level Legal Assessment for NDAs
-    </p>
-</div>
-""", unsafe_allow_html=True)
-
-# -------------------- UPLOAD AREA --------------------
-st.markdown('<div class="upload-box">Drag & Drop Your Contract Here<br>(or Browse Files below)</div>', unsafe_allow_html=True)
-uploaded = st.file_uploader("Browse Files", type=["pdf", "docx", "txt"])
-
+ 
+ 
+# -------------------- SESSION STATE --------------------
+for key, default in [
+    ("history", []),
+    ("analysis", None),        # cached results for the current file
+    ("analysis_key", None),    # file name + provider the cache belongs to
+    ("api_key", ""),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
+ 
+ 
 # -------------------- TEXT EXTRACTION --------------------
-def extract_text(file):
+def extract_text(file) -> str:
     name = file.name.lower()
     if name.endswith(".txt"):
         return file.read().decode("utf-8", errors="ignore")
-    elif name.endswith(".docx"):
-        from docx import Document
-        doc = Document(file)
-        return "\n".join(p.text for p in doc.paragraphs)
-    elif name.endswith(".pdf"):
-        text = ""
+    if name.endswith(".docx"):
+        return "\n".join(p.text for p in Document(file).paragraphs)
+    if name.endswith(".pdf"):
+        chunks = []
         with pdfplumber.open(file) as pdf:
-            for p in pdf.pages:
-                t = p.extract_text()
-                if t:
-                    text += t + "\n"
-        return text
+            for page in pdf.pages:
+                text = page.extract_text()
+                if text:
+                    chunks.append(text)
+        return "\n".join(chunks)
     return ""
-
+ 
+ 
 # -------------------- CLAUSE SPLITTING --------------------
 def split_into_clauses(text):
     lines = text.splitlines()
@@ -157,126 +221,240 @@ def split_into_clauses(text):
     if current["title"] and current["content"]:
         clauses.append({"title": current["title"], "text": "\n".join(current["content"]).strip()})
     return clauses
-
-# -------------------- MAIN LOGIC --------------------
-if uploaded and api_key:
-    text = extract_text(uploaded)
-    st.session_state["history"].append(uploaded.name)
-
-    clauses = split_into_clauses(text)
-    results, counters = analyze_all(clauses)
-
-    # --- RISK SUMMARY BAR ---
-    st.markdown(
-        f"""
-        <div style="display:flex; justify-content:center; gap:38px; margin: 16px 0 30px 0; font-size:18px;">
-            <div style="color:#D64545; font-weight:600;">■ Red: {counters.get('RED',0)}</div>
-            <div style="color:#E6A700; font-weight:600;">■ Yellow: {counters.get('YELLOW',0)}</div>
-            <div style="color:#198754; font-weight:600;">■ Green: {counters.get('GREEN',0)}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
+ 
+ 
+# -------------------- RISK SCORE --------------------
+def risk_score(counters) -> int:
+    """A single headline number. Deliberately simple and explainable:
+    every high-risk clause costs 15 points, every review-needed clause costs 5."""
+    penalty = counters.get("RED", 0) * 15 + counters.get("YELLOW", 0) * 5
+    return max(0, 100 - penalty)
+ 
+ 
+# -------------------- SIDEBAR --------------------
+with st.sidebar:
+    st.markdown("### Model provider")
+    provider_name = st.selectbox("Provider", list(PROVIDERS.keys()), label_visibility="collapsed")
+    st.caption(f"Get a key at {PROVIDERS[provider_name]['key_hint']}")
+ 
+    st.markdown("### API key")
+    api_key = st.text_input(
+        "API key", type="password", label_visibility="collapsed",
+        placeholder="Paste your API key...",
     )
-
-    # --- CLAUSE OUTPUT CARDS + legal tone enhancement ---
-    from explain_llm import enhance_explanation
+    st.session_state.api_key = api_key
+ 
+    st.markdown("---")
+    st.markdown("### Recent files")
+    if not st.session_state.history:
+        st.caption("No files reviewed yet.")
+    for fname in reversed(st.session_state.history[-6:]):
+        st.caption(f"• {fname}")
+ 
+ 
+# -------------------- HEADER --------------------
+st.markdown("""
+<div class="console-bar">
+  <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF"
+       stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+    <polyline points="14 2 14 8 20 8"></polyline>
+    <polyline points="9 15 11 17 15 13"></polyline>
+  </svg>
+  <div>
+    <h1>Contract Risk Auditor</h1>
+    <p>Rule-based clause screening for non-disclosure agreements</p>
+  </div>
+  <div class="console-tag">DETERMINISTIC ENGINE · 16 CHECKS</div>
+</div>
+""", unsafe_allow_html=True)
+ 
+ 
+# -------------------- UPLOAD --------------------
+st.markdown('<div class="drop-zone">Upload an NDA to run a full-document risk screen (PDF, DOCX or TXT)</div>',
+            unsafe_allow_html=True)
+uploaded = st.file_uploader("Upload contract", type=["pdf", "docx", "txt"], label_visibility="collapsed")
+ 
+if not uploaded:
+    st.stop()
+ 
+if not api_key:
+    st.warning("Enter an API key in the sidebar to run the review.")
+    st.stop()
+ 
+ 
+# -------------------- ANALYSIS (cached) --------------------
+cache_key = f"{uploaded.name}::{provider_name}"
+ 
+if st.session_state.analysis_key != cache_key:
+    text = extract_text(uploaded)
+ 
+    if not text.strip():
+        st.error("No text could be extracted. This may be a scanned PDF, which would need OCR.")
+        st.stop()
+ 
+    clauses = split_into_clauses(text)
+    if not clauses:
+        st.error("No numbered clauses were found. This screen expects a clause-numbered contract.")
+        st.stop()
+ 
+    results, counters = analyze_all(clauses)
+ 
+    # Only flagged clauses are sent to the model. Rewriting the explanation for
+    # clauses that already passed adds cost and latency but no information.
+    flagged = [r for r in results if r["level"] in ("RED", "YELLOW")]
+    cfg = PROVIDERS[provider_name]
+ 
+    if flagged:
+        progress = st.progress(0.0, text=f"Reviewing {len(flagged)} flagged clauses...")
+        for i, r in enumerate(flagged, start=1):
+            r["risk"] = enhance_explanation(
+                api_key, r["original_excerpt"], r["risk"], r["suggestion"],
+                api_base=cfg["api_base"], model=cfg["model"],
+            )
+            progress.progress(i / len(flagged), text=f"Reviewing flagged clauses... {i}/{len(flagged)}")
+        progress.empty()
+ 
+    st.session_state.analysis = (results, counters)
+    st.session_state.analysis_key = cache_key
+    if uploaded.name not in st.session_state.history:
+        st.session_state.history.append(uploaded.name)
+ 
+results, counters = st.session_state.analysis
+score = risk_score(counters)
+score_color = "#E5484D" if score < 60 else "#F5A524" if score < 85 else "#30A46C"
+ 
+ 
+# -------------------- DASHBOARD --------------------
+st.markdown(f"""
+<div class="metric-row">
+  <div class="metric-box">
+    <div class="label">Clauses screened</div>
+    <div class="value" style="color:#14181F;">{len(results)}</div>
+  </div>
+  <div class="metric-box">
+    <div class="label">High risk</div>
+    <div class="value" style="color:{LEVEL_COLORS['RED']};">{counters.get('RED', 0)}</div>
+  </div>
+  <div class="metric-box">
+    <div class="label">Review needed</div>
+    <div class="value" style="color:{LEVEL_COLORS['YELLOW']};">{counters.get('YELLOW', 0)}</div>
+  </div>
+  <div class="metric-box">
+    <div class="label">Acceptable</div>
+    <div class="value" style="color:{LEVEL_COLORS['GREEN']};">{counters.get('GREEN', 0)}</div>
+  </div>
+  <div class="metric-box">
+    <div class="label">Risk score</div>
+    <div class="value" style="color:{score_color};">{score}<span style="font-size:15px;color:#79808C;">/100</span></div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
+ 
+ 
+# -------------------- CLAUSE CARDS --------------------
+def render_clause(r):
+    color = LEVEL_COLORS[r["level"]]
+    st.markdown(f"""
+    <div class="clause-card" style="border-left-color:{color};">
+      <div class="clause-head">
+        <span class="clause-title">{r['title']}</span>
+        <span class="clause-badge" style="background:{color};">{LEVEL_LABELS[r['level']]}</span>
+      </div>
+      <div class="field-label">Original excerpt</div>
+      <div class="excerpt">{r['original_excerpt']}</div>
+      <div class="field-label">Risk analysis</div>
+      <div class="field-body">{r['risk']}</div>
+      <div class="field-label">Suggested revision</div>
+      <div class="field-body">{r['suggestion']}</div>
+    </div>
+    """, unsafe_allow_html=True)
+ 
+ 
+tab_all, tab_red, tab_yellow, tab_green = st.tabs([
+    f"All ({len(results)})",
+    f"High risk ({counters.get('RED', 0)})",
+    f"Review needed ({counters.get('YELLOW', 0)})",
+    f"Acceptable ({counters.get('GREEN', 0)})",
+])
+ 
+with tab_all:
     for r in results:
-        r["risk"] = enhance_explanation(api_key, r["original_excerpt"], r["risk"], r["suggestion"])
-
-    for r in results:
-        color = {"RED": "#D64545","YELLOW": "#E6A700","GREEN": "#198754"}[r["level"]]
-        st.markdown(
-            f"""
-            <div style="border-left:6px solid {color}; padding:14px; margin:12px 0; background:#F7F9FF;">
-              <b>{r["title"]}</b> — {r["level"]}
-              <br><br><b>(1) Original (excerpt):</b><br>{r["original_excerpt"]}
-              <br><br><b>(2) Risk Analysis:</b><br>{r["risk"]}
-              <br><br><b>(3) Suggested Revision:</b><br>{r["suggestion"]}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-# -------------------- REPORT GENERATION --------------------
-def save_report(results):
+        render_clause(r)
+for tab, level in [(tab_red, "RED"), (tab_yellow, "YELLOW"), (tab_green, "GREEN")]:
+    with tab:
+        subset = [r for r in results if r["level"] == level]
+        if not subset:
+            st.caption("Nothing in this category.")
+        for r in subset:
+            render_clause(r)
+ 
+ 
+# -------------------- REPORT --------------------
+def save_report(results, counters, score, source_name):
     from docx.shared import RGBColor
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
-
+ 
     doc = Document()
     doc.add_heading("NDA Risk Assessment Report", level=1)
-
-    date = datetime.now().strftime("%Y-%m-%d")
-    doc.add_paragraph(f"Generated on: {date}\n")
-
+    doc.add_paragraph(f"Source document: {source_name}")
+    doc.add_paragraph(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    doc.add_paragraph(
+        f"Overall risk score: {score}/100  |  "
+        f"High risk: {counters.get('RED', 0)}  |  "
+        f"Review needed: {counters.get('YELLOW', 0)}  |  "
+        f"Acceptable: {counters.get('GREEN', 0)}"
+    )
+    doc.add_paragraph("")
+ 
     for r in results:
         heading = doc.add_heading(level=2)
-        run = heading.add_run(f"{r['title']} — {r['level']}")
-        if r["level"] == "RED":
-            run.font.color.rgb = RGBColor(214, 69, 69)
-        elif r["level"] == "YELLOW":
-            run.font.color.rgb = RGBColor(230, 167, 0)
-        else:
-            run.font.color.rgb = RGBColor(25, 135, 84)
-
+        run = heading.add_run(f"{r['title']} — {LEVEL_LABELS[r['level']]}")
+        rgb = {"RED": (229, 72, 77), "YELLOW": (245, 165, 36), "GREEN": (48, 163, 108)}[r["level"]]
+        run.font.color.rgb = RGBColor(*rgb)
+ 
         p = doc.add_paragraph()
-        run = p.add_run("")
+        p.add_run("")
         p_format = p._p.get_or_add_pPr()
-        border = OxmlElement('w:pBdr')
-        left = OxmlElement('w:left')
-        left.set(qn('w:val'), 'single')
-        left.set(qn('w:sz'), '18')
-        left.set(qn('w:space'), '4')
-        left.set(qn('w:color'),
-                 'D64545' if r["level"] == "RED"
-                 else 'E6A700' if r["level"] == "YELLOW"
-                 else '198754')
+        border = OxmlElement("w:pBdr")
+        left = OxmlElement("w:left")
+        left.set(qn("w:val"), "single")
+        left.set(qn("w:sz"), "18")
+        left.set(qn("w:space"), "4")
+        left.set(qn("w:color"), "%02X%02X%02X" % rgb)
         border.append(left)
         p_format.append(border)
-
+ 
         doc.add_paragraph("(1) Original (excerpt):")
         doc.add_paragraph(r["original_excerpt"])
-        doc.add_paragraph("(2) Risk Analysis:")
+        doc.add_paragraph("(2) Risk analysis:")
         doc.add_paragraph(r["risk"])
-        doc.add_paragraph("(3) Suggested Revision:")
+        doc.add_paragraph("(3) Suggested revision:")
         doc.add_paragraph(r["suggestion"])
         doc.add_paragraph("")
-
+ 
     path = os.path.join(tempfile.gettempdir(), "NDA_Risk_Report.docx")
     doc.save(path)
     return path
+ 
+ 
+st.markdown("---")
+report_path = save_report(results, counters, score, uploaded.name)
+with open(report_path, "rb") as f:
+    st.download_button(
+        label="Download full report (.docx)",
+        data=f.read(),
+        file_name="NDA_Risk_Report.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+ 
 
-# -------------------- DOWNLOAD --------------------
-if uploaded and api_key:
-    report_path = save_report(results)
-    with open(report_path, "rb") as f:
-        report_bytes = f.read()
 
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown("<br><br>", unsafe_allow_html=True)
 
-    # left-aligned download placement
-    col_left, col_right = st.columns([1, 3])  # 左列放内容，右列空出来
 
-    with col_left:
-        st.markdown(
-            """
-            <div style="text-align:left; margin-bottom:8px;">
-                <span style="font-size:18px; font-weight:600;">Download Full Report</span>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
 
-        st.download_button(
-            label="Download Full Report (.docx)",
-            data=report_bytes,
-            file_name="NDA_Risk_Report.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            key="download_report_left",
-            help="Download the NDA Legal Risk Report",
-            use_container_width=False
-        )
 
-        st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
+
+
+
