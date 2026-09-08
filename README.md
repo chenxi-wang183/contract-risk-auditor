@@ -1,0 +1,95 @@
+Contract Risk Auditor
+NDA 条款风险筛查工具:上传保密协议,逐条判定风险等级,输出可下载的 Word 风险评估报告。判定逻辑由确定性规则引擎完成,模型仅负责措辞润色。
+
+A clause-level risk screen for non-disclosure agreements. Upload an NDA, get every clause graded, and download a Word risk assessment report. The grading is done by a deterministic rule engine — the model only rewrites the wording.
+
+Show Image
+
+在线体验 / Live app: https://contract-risk-auditor-aflvtd2ynvndbdnzeq3aag.streamlit.app/
+
+不填 API Key 也可完整使用:条款分级、风险说明、修改建议与报告导出均不依赖模型。填入 Key 后,风险说明会被改写为律师备忘录口吻。支持智谱 GLM、Google Gemini 与 OpenAI。
+
+Works without an API key: grading, findings, suggested revisions and the report export all run offline. Adding a key rewrites the findings in internal-memo tone. Zhipu GLM, Google Gemini and OpenAI are supported.
+
+1. 用途 / Purpose
+面向初步审查场景:律师或分析人员在进入详细起草与谈判之前,需要快速识别一份 NDA 中的结构性风险与不合规的保密条款。本工具不替代完整的法律分析,而是提供一层结构化的筛查。
+
+Built for preliminary review: a lawyer or analyst needs to spot structural risks and non-compliant confidentiality terms in an NDA before detailed drafting or negotiation begins. It does not replace full legal analysis — it adds a structured screening layer in front of it.
+
+2. 核心设计:判断与表达分离 / Core design
+大多数「AI 合同审查」工具把判断交给模型,同一份合同两次审查可能得出不同结论——这对合规审查是不可接受的。本工具将两件事分开:
+
+Most "AI contract review" tools let the model make the judgement, which means the same contract can be graded differently on two runs. That is unacceptable for compliance work. This tool separates the two jobs:
+
+环节 / Layer	由谁完成 / Handled by	是否可复现 / Reproducible
+风险判定与修改建议 / Risk grading and suggested revisions	规则引擎 sop_analyzer.py(347 行确定性规则)/ Rule engine, 347 lines of deterministic checks	✅ 同一份文件结果永远一致 / Identical every run
+措辞润色 / Wording	LLM(prompt 明确禁止添加新事实)/ LLM, prompted not to add facts	仅影响表达 / Affects phrasing only
+这也是本项目不使用 RAG 的原因。 检索增强生成适合信息查找,但风险判定需要结果稳定——律师无法基于每次都不同的结论出具报告。需要检索式问答的场景,参见姊妹项目 Legal AI Assistant。
+
+This is also why the project deliberately avoids RAG. Retrieval is right for finding information; risk grading needs stable output, because no lawyer can issue a report built on conclusions that change between runs. For the retrieval case, see the companion project above.
+
+3. 处理流程 / Workflow
+上传文档 / User uploads a document
+提取文本并按条款编号切分 / Text is extracted and split into numbered clauses
+规则引擎逐条判定风险等级 / The rule engine grades each clause
+模型润色风险说明(可跳过)/ The model refines the wording (skippable)
+展示结果并生成可下载报告 / Results are displayed and a report is generated
+4. 检查项 / What it checks
+保密信息定义是否过宽 — 缺乏客观范围的「任何及所有信息」表述存在不可执行风险
+是否列明标准例外情形 — 公开领域、事先知悉、第三方合法披露、独立开发
+保密期限是否明确 — 「双方认为适当的期间」等不确定表述
+商业秘密是否约定永续保护 — 固定期限届满后商业秘密失去保护
+主观标准的使用 — reasonable、promptly、best efforts、material 等需要具体化的措辞
+口头披露的处理 — 是否要求事后书面确认,以及确认期限是否合理
+Checks include: overbroad definitions of confidential information, missing standard carve-outs (public domain, prior knowledge, third-party disclosure, independent development), indefinite or absent confidentiality terms, fixed-term protection wrongly applied to trade secrets, reliance on subjective standards, and the treatment of oral disclosures.
+
+输出 / Output: 每个条款给出红 / 黄 / 绿三级判定、原文摘录、风险分析与建议修改;顶部汇总风险评分(满分 100,每个高风险条款扣 15 分、每个待审条款扣 5 分——刻意保持可解释)。
+
+Each clause is graded red / amber / green with an excerpt, a finding and a suggested revision. The headline score starts at 100 and deducts 15 per high-risk clause and 5 per flagged clause — deliberately simple enough to explain.
+
+5. 测试样本 / Test cases
+仓库 tests/ 目录下提供三份 NDA 样本,风险程度递进,用于验证判定的一致性:
+
+Three NDA samples of increasing quality are provided under tests/, to show that grading is consistent and reproducible:
+
+样本 / Sample	设计特征 / Drafted with	预期判定 / Expected
+test1-high-risk.txt	定义无例外情形;商业秘密仅保护 3 年;口头信息须事先书面标记;仅要求 reasonable efforts / No carve-outs; trade secrets protected for only 3 years; oral information must be marked in advance	🔴 多处高风险
+test2-moderate.txt	信息须标记方受保护;期限 5 年;完全未提及商业秘密 / Marking required for protection; 5-year term; trade secrets not addressed at all	🟡 待审
+test3-compliant.txt	例外情形完整;口头信息 5 个工作日内书面确认;商业秘密永续保护 / Full carve-outs; oral disclosure confirmed within 5 business days; trade secrets protected indefinitely	🟢 基本合规
+验证方式: 依次上传三份文件,对比顶部的风险评分与红黄绿分布。同一份文件重复上传,结果应完全一致——这是规则引擎相较于模型判定的核心优势。
+
+Upload each in turn and compare the risk score and colour distribution. Re-uploading the same file must produce an identical result — that reproducibility is the point of using a rule engine rather than a model.
+
+更复杂的排版可用以下公开 PDF 测试 / For more complex formatting, these public PDFs also work:
+
+TN Tech Mutual NDA template
+UK Government example mutual NDA
+6. 报告输出 / Report output
+Show Image
+
+导出的 Word 报告包含条款编号与标题、原文摘录、风险分级、判定理由与建议修改,可直接用于内部法务复核、谈判前准备或初级分析人员培训。
+
+The exported Word report contains clause numbers and titles, the original excerpt, the risk grade, the reasoning behind it and suggested revisions — usable for internal legal review, negotiation preparation, or training junior analysts.
+
+7. 局限 / Limitations
+仅针对标准 NDA 设计,不处理商业背景与交易意图 / Designed for standard NDAs; it does not interpret business context or transaction intent
+不进行特定法域的判例推理 / No jurisdiction-specific case-law reasoning
+依赖条款编号切分,无编号的合同无法处理 / Relies on numbered clauses; unnumbered contracts are not supported
+模型的发挥空间被刻意限制。 判定与建议均由规则给出,模型仅改写措辞且被禁止添加新事实——这样做牺牲了表达的灵活度,换取答案不会出现凭空捏造的法条或结论 / The model is deliberately constrained: it rewrites wording and is forbidden from adding facts. This costs some fluency and buys the guarantee that no fabricated statute or conclusion enters the output
+8. 技术栈 / Built with
+Python · Streamlit — 界面与部署 / UI and deployment
+纯 Python 规则引擎 / Pure-Python rule engine — 无外部依赖,无模型调用 / no dependencies, no model calls
+pdfplumber · python-docx — 文档解析与报告生成 / parsing and report generation
+多供应商支持 / Multi-provider — 智谱 GLM、Google Gemini、OpenAI,通过 OpenAI 兼容接口统一接入 / unified through OpenAI-compatible endpoints
+9. 本地运行 / Running locally
+bash
+git clone https://github.com/chenxi-wang183/contract-risk-auditor.git
+cd contract-risk-auditor
+pip install -r requirements.txt
+streamlit run app.py
+开发说明 / Development note
+作者为法学背景,规则引擎的检查项来自合同审查实务中的常见风险点;工程实现通过大模型辅助编程(vibe coding)完成。
+
+Written by a law student. The checks in the rule engine come from common risk points in contract review practice; the engineering was done with LLM-assisted development.
+
+
