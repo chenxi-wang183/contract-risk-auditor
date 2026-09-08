@@ -2,3 +2,5 @@ streamlit
 openai
 pdfplumber
 python-docx
+chromadb
+onnxruntime
